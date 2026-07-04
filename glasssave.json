@@ -17,7 +17,13 @@
       "name": "Shopnil Market",
       "total": 3500,
       "saved": 900
+    },
+    {
+      "id": 6,
+      "name": "Hosting",
+      "total": 700,
+      "saved": 0
     }
   ],
-  "nextId": 6
+  "nextId": 7
 }
