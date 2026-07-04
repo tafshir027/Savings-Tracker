@@ -474,17 +474,32 @@ async function startApp(useGH){
   if(useGH){
     setSyncStatus('syncing','Loading…');
     try{
+      console.group('🚀 Starting GlassSave with GitHub');
+      console.log('Config:', {owner: GH.owner, repo: GH.repo, tokenLength: GH.token?.length});
+      
       const d = await ghLoad();
+      console.log('📦 Loaded data:', d ? 'Found existing data' : 'No existing data');
+      
       if(d){
         app = d;
         setSyncStatus('synced','Synced');
       } else {
+        console.log('📝 No existing data, creating defaults');
         app = JSON.parse(JSON.stringify(DEFAULT_DATA));
         setSyncStatus('syncing','Creating…');
         await ghSave(app);
         setSyncStatus('synced','Synced');
       }
-    }catch(e){
+      console.groupEnd();
+    } catch(e) {
+      console.group('❌ Startup Error');
+      console.error('Error details:', {
+        message: e.message,
+        stack: e.stack,
+        ghConfig: {owner: GH.owner, repo: GH.repo, hasToken: !!GH.token}
+      });
+      console.groupEnd();
+      
       setSyncStatus('error','Load failed');
       showToast('Load failed', e.message, 'e');
       tryLocalFallback();
@@ -501,8 +516,13 @@ async function startApp(useGH){
 function tryLocalFallback(){
   try{
     const s = localStorage.getItem('gsData');
-    if(s){ app = JSON.parse(s); return; }
+    if(s){ 
+      app = JSON.parse(s); 
+      console.log('📦 Loaded from localStorage backup');
+      return; 
+    }
   }catch(e){}
+  console.log('📝 Using default data');
   app = JSON.parse(JSON.stringify(DEFAULT_DATA));
 }
 
@@ -525,24 +545,73 @@ async function doSetup(){
   const owner = document.getElementById('s-owner').value.trim();
   const repo  = document.getElementById('s-repo').value.trim();
   const token = document.getElementById('s-token').value.trim();
-  if(!owner||!repo||!token){ showToast('Missing info','Fill in all fields','e'); return; }
+  
+  if(!owner||!repo||!token){ 
+    showToast('Missing info','Fill in all fields','e'); 
+    return; 
+  }
+  
   const btn = document.getElementById('setup-btn');
-  btn.innerHTML = '<span class="spinner"></span> Connecting…'; btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Connecting…'; 
+  btn.disabled = true;
+  
   try{
-    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${GH_FILE}`;
-    const r = await fetch(url, {headers: ghHead({owner,repo,token})});
-    if(r.status!==200 && r.status!==404){
-      const e = await r.json().catch(()=>({}));
-      throw new Error(e.message || `HTTP ${r.status}`);
+    // First, test the connection with a simple API call
+    const testUrl = `https://api.github.com/repos/${owner}/${repo}`;
+    console.log('🔍 Testing repository access:', testUrl);
+    
+    const testR = await fetch(testUrl, {
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    });
+    
+    if(!testR.ok) {
+      if(testR.status === 404) {
+        throw new Error('Repository not found. Please create it first in GitHub.');
+      } else if(testR.status === 401) {
+        throw new Error('Invalid token. Please check your personal access token and ensure it has "repo" scope.');
+      } else if(testR.status === 403) {
+        throw new Error('Access forbidden. Token may not have sufficient permissions.');
+      } else {
+        const e = await testR.json().catch(()=>({}));
+        throw new Error(e.message || `Cannot access repository (HTTP ${testR.status})`);
+      }
     }
-    GH = {owner,repo,token};
+    
+    console.log('✅ Repository access confirmed');
+    
+    // Now try to check if the data file exists
+    const fileUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${GH_FILE}`;
+    const r = await fetch(fileUrl, {
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    });
+    
+    if(r.status !== 200 && r.status !== 404){
+      const e = await r.json().catch(()=>({}));
+      throw new Error(e.message || `Unexpected status: HTTP ${r.status}`);
+    }
+    
+    console.log(r.status === 200 ? '✅ Existing data file found' : 'ℹ️ No existing data file (will create new)');
+    
+    GH = {owner, repo, token};
     localStorage.setItem('gsGH', JSON.stringify(GH));
     localStorage.removeItem('gsLocalOnly');
     startApp(true);
-  }catch(e){
+    
+  } catch(e) {
+    console.error('❌ Setup failed:', e);
     showToast('Connection failed', e.message, 'e');
+    btn.innerHTML = '<i class="fas fa-link"></i> Save &amp; Connect'; 
+    btn.disabled = false;
   }
-  btn.innerHTML = '<i class="fas fa-link"></i> Save &amp; Connect'; btn.disabled = false;
 }
 
 function useLocalOnly(){
@@ -578,41 +647,114 @@ function frB64(b){
 }
 
 async function ghLoad(){
-  const r = await fetch(`https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH_FILE}`, {headers: ghHead()});
-  if(r.status===404){ ghSha=null; return null; }
-  if(!r.ok){ const e = await r.json().catch(()=>({})); throw new Error(e.message || `HTTP ${r.status}`); }
-  const d = await r.json();
-  ghSha = d.sha;
-  return JSON.parse(frB64(d.content));
+  try {
+    const url = `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH_FILE}`;
+    console.log('🔄 Loading from:', url);
+    
+    const r = await fetch(url, {headers: ghHead()});
+    console.log('📡 Response status:', r.status);
+    
+    if(r.status === 404){ 
+      console.log('ℹ️ File does not exist yet');
+      ghSha = null; 
+      return null; 
+    }
+    
+    if(r.status === 401 || r.status === 403){ 
+      throw new Error('Authentication failed. Check your token permissions (needs "repo" scope).'); 
+    }
+    
+    if(!r.ok){ 
+      const e = await r.json().catch(()=>({}));
+      console.error('❌ GitHub API Error:', e);
+      throw new Error(e.message || `GitHub API Error: HTTP ${r.status}`); 
+    }
+    
+    const d = await r.json();
+    ghSha = d.sha;
+    console.log('✅ Successfully loaded, SHA:', ghSha?.substring(0, 10));
+    return JSON.parse(frB64(d.content));
+    
+  } catch(e) {
+    console.error('❌ ghLoad failed:', e);
+    throw e;
+  }
 }
 
 async function ghSave(data){
-  const body = {
-    message: 'GlassSave update',
-    content: toB64(JSON.stringify(data, null, 2))
-  };
-  if(ghSha) body.sha = ghSha;
-
-  const r = await fetch(
-    `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH_FILE}`,
-    {method:'PUT', headers: ghHead(), body: JSON.stringify(body)}
-  );
-
-  if(r.status===409){
-    await ghLoad();
-    const body2 = {message:'GlassSave update', content: toB64(JSON.stringify(data,null,2)), sha: ghSha};
-    const r2 = await fetch(
-      `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH_FILE}`,
-      {method:'PUT', headers: ghHead(), body: JSON.stringify(body2)}
-    );
-    if(!r2.ok){ const e = await r2.json().catch(()=>({})); throw new Error(e.message || `HTTP ${r2.status}`); }
-    const d2 = await r2.json(); ghSha = d2.content.sha;
-    return;
+  const MAX_RETRIES = 3;
+  let retryCount = 0;
+  
+  while(retryCount < MAX_RETRIES) {
+    try {
+      const body = {
+        message: 'GlassSave update ' + new Date().toISOString(),
+        content: toB64(JSON.stringify(data, null, 2))
+      };
+      
+      // Only include SHA if we're updating an existing file
+      if(ghSha) {
+        body.sha = ghSha;
+        console.log(`💾 Saving (update), SHA: ${ghSha.substring(0, 10)}`);
+      } else {
+        console.log('💾 Saving (new file)');
+      }
+      
+      const r = await fetch(
+        `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH_FILE}`,
+        {method:'PUT', headers: ghHead(), body: JSON.stringify(body)}
+      );
+      
+      console.log('📡 Save response status:', r.status);
+      
+      if(r.status === 201 || r.status === 200) {
+        // Success!
+        const d = await r.json();
+        ghSha = d.content.sha;
+        console.log('✅ Saved successfully, new SHA:', ghSha?.substring(0, 10));
+        return;
+      }
+      
+      if(r.status === 409) {
+        // Conflict - need to fetch latest SHA and retry
+        console.log('⚠️ SHA conflict detected, fetching latest version...');
+        const latestData = await ghLoad(); // This updates ghSha with latest
+        
+        if(!ghSha) {
+          // Edge case: file was deleted between our read and write
+          console.log('ℹ️ File appears to have been deleted, will create new');
+          retryCount++;
+          continue;
+        }
+        
+        console.log('🔄 Retrying with new SHA:', ghSha?.substring(0, 10));
+        retryCount++;
+        continue;
+      }
+      
+      if(r.status === 404 && !ghSha) {
+        // File doesn't exist yet, this is first creation
+        console.log('ℹ️ Creating new file...');
+        retryCount++;
+        continue;
+      }
+      
+      // Other errors
+      const e = await r.json().catch(()=>({}));
+      console.error('❌ GitHub API Error on save:', e);
+      throw new Error(e.message || `Save failed: HTTP ${r.status}`);
+      
+    } catch(e) {
+      if(retryCount >= MAX_RETRIES - 1) {
+        console.error('❌ All save retries exhausted');
+        throw e;
+      }
+      console.error(`❌ Save attempt ${retryCount + 1} failed:`, e.message);
+      retryCount++;
+    }
   }
-
-  if(!r.ok){ const e = await r.json().catch(()=>({})); throw new Error(e.message || `HTTP ${r.status}`); }
-  const d = await r.json();
-  ghSha = d.content.sha;
+  
+  throw new Error('Save failed after maximum retries');
 }
 
 function persist(){
