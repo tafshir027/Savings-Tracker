@@ -23,7 +23,13 @@
       "name": "Hosting",
       "total": 700,
       "saved": 0
+    },
+    {
+      "id": 7,
+      "name": "Loan",
+      "total": 4000,
+      "saved": 0
     }
   ],
-  "nextId": 7
+  "nextId": 8
 }
