@@ -11,7 +11,13 @@
       "name": "Dhaka",
       "total": 5000,
       "saved": 1600
+    },
+    {
+      "id": 5,
+      "name": "Shopnil Market",
+      "total": 3500,
+      "saved": 900
     }
   ],
-  "nextId": 5
+  "nextId": 6
 }
