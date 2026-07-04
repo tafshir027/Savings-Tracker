@@ -29,7 +29,13 @@
       "name": "Loan",
       "total": 4000,
       "saved": 0
+    },
+    {
+      "id": 8,
+      "name": "google drive",
+      "total": 800,
+      "saved": 0
     }
   ],
-  "nextId": 8
+  "nextId": 9
 }
