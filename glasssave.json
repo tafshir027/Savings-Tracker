@@ -1,0 +1,17 @@
+{
+  "budgets": [
+    {
+      "id": 1,
+      "name": "Bandarban Tour",
+      "total": 8000,
+      "saved": 400
+    },
+    {
+      "id": 2,
+      "name": "Treatment",
+      "total": 5000,
+      "saved": 1200
+    }
+  ],
+  "nextId": 3
+}
